@@ -1,0 +1,1469 @@
+
+--- Page 1 ---
+MagFace: A Universal Representation for
+Face Recognition and Quality Assessment
+Qiang Meng, Shichao Zhao, Zhida Huang, Feng Zhou
+Algorithm Research, Aibee Inc.
+{qmeng,sczhao,zdhuang,fzhou}@aibee.com
+Abstract
+The performance of face recognition system degrades
+when the variability of the acquired faces increases. Prior
+work alleviates this issue by either monitoring the face
+quality in pre-processing or predicting the data uncertainty
+along with the face feature. This paper proposes MagFace,
+a category of losses that learn a universal feature embed-
+ding whose magnitude can measure the quality of the given
+face. Under the new loss, it can be proven that the magni-
+tude of the feature embedding monotonically increases if the
+subject is more likely to be recognized. In addition, Mag-
+Face introduces an adaptive mechanism to learn a well-
+structured within-class feature distributions by pulling easy
+samples to class centers while pushing hard samples away.
+This prevents models from overﬁtting on noisy low-quality
+samples and improves face recognition in the wild. Ex-
+tensive experiments conducted on face recognition, qual-
+ity assessments as well as clustering demonstrate its su-
+periority over state-of-the-arts. The code is available at
+https://github.com/IrvingMeng/MagFace.
+1. Introduction
+Recognizing face in the wild is difﬁcult mainly due to
+the large variability exhibited by face images acquired in
+unconstrained settings. This variability is associated to the
+image acquisition conditions (such as illumination, back-
+ground, blurriness, and low resolution), factors of the face
+(such as pose, occlusion and expression) or biases of the
+deployed face recognition system [36]. To cope with these
+challenges, most relevant face analysis system under uncon-
+strained environment ( e.g., surveillance video) consists of
+three stages: 1) face acquisition to select from a set of raw
+images or capture from video stream the most suitable face
+image for recognition purpose; 2) feature extraction to ex-
+tract discriminative representation from each face image; 3)
+facial application to match the reference image towards a
+given gallery or cluster faces into groups of same person.
+Easy
+Hard
+Semi-hard
+(a)
+Class center
+𝜽
+O
+𝒍
+𝑐𝑜𝑠𝜃
+𝑙
+ (b)
+Figure 1: MagFace learns for (a) in-the-wild faces (b) a universal
+embedding by pulling the easier samples closer to the class center
+and pushing them away from the origin o. As shown in our exper-
+iments and supported by mathematical proof, the magnitude lbe-
+fore normalization increases along with feature’s cosine distance
+to its class center, and therefore reveals the quality for each face.
+The larger the l, the more likely the sample can be recognized.
+To acquire the optimal reference image in the ﬁrst stage,
+a technique called face quality assessment [4, 26] is of-
+ten employed on each detected face. Although the ideal
+quality score should be indicative of the face recognition
+performance, most of early work [1, 2] estimates quali-
+ties based on human-understandable factors such as lumi-
+nances, distortions and pose angles, which may not directly
+favor the face feature learning in the second stage. Alter-
+natively, learning-based methods [4, 15] train quality as-
+sessment models with artiﬁcially or human labelled quality
+values. Theses methods are error-prone as there lacks of a
+clear deﬁnition of quality and human may not know the best
+characteristics for the whole systems.
+To achieve high end-to-end application performances in
+the second stage, various metric-learning [27, 30] or classi-
+ﬁcation losses [48, 25, 20, 13, 40, 9, 5] emerged in the past
+few years. These works learn to represent each face im-
+age as a deterministic point embedding in the latent space
+regardless of the variance inherent in faces. In reality, how-
+ever, low-quality or large-pose images like Fig. 1a widely
+exist and their facial features are ambiguous or absent.
+arXiv:2103.06627v4  [cs.CV]  26 Jul 2021
+
+--- Page 2 ---
+Given these challenges, a large shift in the embedded points
+is inevitable, leading to false recognition. For instance, per-
+formance reported by prior state-of-the-art [29] on IJB-C is
+much lower than LFW. Recently, conﬁdence-aware meth-
+ods [29, 7] propose to represent each face image as a Gaus-
+sian distribution in the latent space, where the mean of the
+distribution estimates the most likely feature values while
+the variance shows the uncertainty in the feature values. De-
+spite the performance improvement, these methods seek to
+separate the face feature learning from data noise modeling.
+Therefore, additional network blocks are introduced in the
+architecture to compute the uncertainty level for each im-
+age. This complicates the training procedure and adds com-
+putational burden in inference. In addition, the uncertainty
+measure cannot be directed used in conventional metrics for
+comparing face features.
+This paper proposes MagFace to learn a universal and
+quality-aware face representation. The design of MagFace
+follows two principles: 1) Given the face images of the
+same subject but in different levels of quality (e.g., Fig. 1a),
+it seeks to learn a within-class distribution, where the high-
+quality ones stay close to the class center while the low-
+quality ones are distributed around the boundary. 2) It
+should pose the minimum cost for changing existing infer-
+ence architecture to measure the face quality along with the
+computation of face feature. To achieve the above goals, we
+choose magnitude, the independent property to the direc-
+tion of the feature vector, as the indicator for quality assess-
+ment. The core objective of MagFace is to not only enlarge
+inter-class distance, but also maintain a cone-like within-
+class structure like Fig. 1b, where ambiguous samples are
+pushed away from the class centers and pulled to the origin.
+This is realized by adaptively down-weighting ambiguous
+samples during training and rewarding the learned feature
+vector with large magnitude in the MagFace loss. To sum
+up, MagFace improves previous work in two aspects:
+1. For the ﬁrst time, MagFace explores the complete set
+of two properties associated with feature vector, direc-
+tion and magnitude, in the problem of face recognition
+while previous works often neglect the importance of
+the magnitude by normalizing the feature. With exten-
+sive experimental study and solid mathematical proof,
+we show that the magnitude can reveal the quality of
+faces and can be bundled with the characteristics of
+recognition without any quality labels involved.
+2. MagFace explicitly distributes features structurally in
+the angular direction (as shown in Fig. 1b). By dynam-
+ically assigning angular margins based on samples’
+hardness for recognition, MagFace prevents model
+from overﬁtting on noisy and low-quality samples and
+learns a well-structured distributions that are more
+suitable for recognition and clustering purpose.
+2. Related Works
+2.1. Face Recognition
+Recent years have witnessed the breakthrough of deep
+convolutional face recognition techniques. A number of
+successful systems, such as DeepFace [35], DeepID [33],
+FaceNet [27] have shown impressive performance on face
+identiﬁcation and veriﬁcation. Apart from the large-scale
+training data and deep network architectures, the major
+advance comes from the evolution of training losses for
+CNN. Most of early works rely on metric-learning based
+loss, including contrastive loss [8], triplet loss [27], n-
+pair loss [30], angular loss [41], etc. Suffering from the
+combinatorial explosion in the number of face triplets,
+embedding-based method is usually inefﬁcient in training
+on large-scale dataset. Therefore, the main body of research
+in deep face recognition has focused on devising more efﬁ-
+cient and effective classiﬁcation-based loss. Wen et al. [44]
+develop a center loss to learn centers for each identity to
+enhance the intra-class compactness. L2-softmax [25] and
+NormFace [39] study the necessity of the normalization op-
+eration and appliedL2 normalization constraint on both fea-
+tures and weights. From then on, several angular margin-
+based losses, such as SphereFace [20], AM-softmax [38],
+SV-AM-Softmax [42], CosFace [40], ArcFace [9], progres-
+sively improve the performance on various benchmarks to
+the newer level. More recently, AdaptiveFace [19], Ada-
+Cos [49] and FairLoss [18] introduce adaptive margin strat-
+egy to automatically tune hyperparameters and generate
+more effective supervisions during training. Compared to
+our method, all these work tend to suppress the effect of
+magnitude in the loss by normalizing the feature vector.
+2.2. Face Quality Assessment
+Face image quality is an important factor to enable
+high-performance face recognition systems [4]. Traditional
+methods, such as ISO/IEC 19794-5 standard [1], ICAO
+9303 standard [2], Brisque [31], Niqe [23] and Piqe [37],
+describe qualities from image-based aspects ( e.g., distor-
+tion, illumination and occlusion) or subject-based mea-
+sures (e.g., accessories). Learning-based approaches such
+as FaceQNet [15] and Best-Rowden [4] regress qualities by
+networks trained on human-assessed and similarity-based
+labels. However, these quality labels are error-prone as hu-
+man may not know the best characteristics for the recog-
+nition system and therefore cannot consider all proper fac-
+tors. Recently, several uncertainty-based methods are pro-
+posed to express face qualities by the uncertainties of fea-
+tures. SER-FIQ [36] forwards an image to a network with
+dropout several times and measures face quality by the vari-
+ation of extracted features. Conﬁdence-aware face recogni-
+tion methods [29, 7] propose to represent each face image
+as a Gaussian distribution in the latent space and learn the
+uncertainty in the feature values. Although these methods
+
+--- Page 3 ---
+21 3
+O𝜃"> 𝜽𝟑> 𝜃%
+𝑾'
+𝑾
+𝑩' 𝑩
+𝒎
+(a)
+O
+𝒎𝟑 𝒎𝟏
+𝒂𝟑 𝒂𝟏
+𝒎𝟐
+𝒂𝟐Feasible Region by 𝒎𝒂
+𝑾' 𝑩'
+𝑾
+𝑩𝟏
+𝑩𝟐
+𝑩𝟑 (b)
+O 21 3
+Effect of 𝒈(𝒂) Effect of 𝐦(𝒂)
+𝑾' 𝑩'
+𝑾 (c)
+2 13O𝜽𝟑> 𝜃%> 𝜃"
+𝑾' 𝑩'
+𝑾 (d)
+Figure 2: Geometrical interpretation of the feature space (without normalization) optimized by ArcFace and MagFace. (a) Two-class
+distributions optimized by ArcFace, where w and w′ are the class centers and their decision boundaries B and B′ are separated by the
+additive margin m. Circle 1, 2, 3 represent three types samples of class wwith descending qualities. (b) MagFace introduces m(ai) which
+dynamically adjust boundaries based on feature magnitudes, and ends to a new feasible region. (c) Effects of g(ai) and m(ai). (d) Final
+feature distributions of our MagFace. Best viewed in color.
+work in an unsupervised manner like ours, they require ad-
+ditional computational costs or network blocks, which com-
+plicate their usage in conventional face systems.
+2.3. Face Clustering
+Face clustering exploits unlabeled data to cluster them
+into pseudo classes. Traditional clustering methods usually
+work in an unsupervised manner, such as K-means [21].
+DBSCAN [11] and hierarchical clustering. Several su-
+pervised clustering methods based on graph convolutional
+network (GCN) are proposed recently. For example, L-
+GCN [43] performs reasoning and infers the likelihood of
+linkage between pairs in the sub-graphs. Yang et al. [46]
+designs two graph convolutional networks, named GCN-V
+and GCN-E, to estimate the conﬁdence of vertices and the
+connectivity of edges, respectively. Instead of developing
+clustering methods, we aim at improving feature distribu-
+tion structure for clustering.
+3. Methodology
+In this section, we ﬁrst review the deﬁnition of Arc-
+Face [9], one of the most popular losses used in face recog-
+nition. Based on the analysis of ArcFace, we then derive the
+objective and prove the key properties for MagFace. In the
+end, we compare softmax and ArcFace with MagFace from
+the perspective of feature magnitude.
+3.1. ArcFace Revisited
+Training loss plays an important role in face represen-
+tation learning. Among the various choices (see [10] for
+a recent survey), ArcFace [9] is perhaps the most widely
+adopted one in both academy and industry application due
+to its easiness in implementation and state-of-the-art per-
+formance on a number of benchmarks. Suppose that we are
+given a training batch of N face samples {fi,yi}N
+i=1 of n
+identities, where fi ∈Rd denotes the d-dimensional em-
+bedding computed from the last fully connected layer of the
+neural networks and yi = 1,··· ,n is its associated class
+label. ArcFace and other variants improve the conventional
+softmax loss by optimizing the feature embedding on a hy-
+persphere manifold where the learned face representation is
+more discriminative. By deﬁning the angle θj between fi
+and j-th class center wj ∈Rd as wT
+j fi = ∥wj∥∥fi∥cos θj,
+the objective of ArcFace [9] can be formulated as
+L= −1
+N
+N∑
+i=1
+log escos (θyi+m)
+escos (θyi+m) + ∑
+j̸=yi
+escos θj
+, (1)
+where m >0 denotes the additive angular margin and sis
+the scaling parameter.
+Despite its superior performances on enforcing intra-
+class compactness and inter-class discrepancy, the angular
+margin penalty mused by ArcFace is quality-agnostic and
+the resulting structure of the within-class distribution could
+be arbitrary in unconstrained scenarios. For example, let us
+consider the scenario illustrated in Fig. 2a, where we have
+face images of the same class in three levels of qualities in-
+dicated by the circle sizes: the larger the radius, the more
+uncertain the feature representation and the more difﬁculty
+the face can be recognized. Because ArcFace employs a
+uniform margin m, each image in one class shares the same
+decision boundary, i.e., B : cos(θ + m) = cos(θ′) with
+respect to the neighbor class. The three types of samples
+can stay at arbitrary location in the feasible region (shading
+area in Fig. 2a) without any penalization by the angular mar-
+gin. This leads to unstable within-class distribution,e.g., the
+high-quality face (type 1) stay along the boundary Bwhile
+the low-quality ones (type 2 and 3) are closer to the center
+w. This unstableness can hurt the performances on in-the-
+wild recognition as well as other facial application such as
+face clustering. Moreover, hard and noisy samples are over-
+weighted as they are hard to stay in the feasible area and the
+models may overﬁt to them.
+
+--- Page 4 ---
+Hard Easy
+(a) Softmax
+Hard Easy (b) ArcFace
+Hard Easy (c) MagFace
+Figure 3: Visualization of feature magnitudes and difﬁculties for recognition. Models are trained on MS1M-V2 [14, 9] and 512 samples
+of the last iteration are used for visualization. Negative losses are used to reveal the hardness for Softmax while we use cosine value of θ
+(angle between a feature and its class center) for ArcFace and MagFace.
+3.2. MagFace
+Based on the above analysis, previous cosine-similarity-
+based face recognition loss lacks more ﬁne-grained con-
+straint beyond a ﬁxed margin m. This leads to unstable
+within-class structure especially in the unconstrained case
+(e.g., Fig. 2a) where the variability of each subject’s faces is
+large. To address the aforementioned problem, this section
+proposes MagFace, a novel framework to encode quality
+measure into the face representation. Unlike previous work
+[29, 7] that call for additional uncertainty term, we pur-
+sue a minimalism design by optimizing over the magnitude
+ai = ∥fi∥without normalization of each feature fi. Our
+design has two major advantages: 1) We can keep using the
+cosine-based metric that has been widely adopted by most
+existing inference systems; 2) By simultaneously enforcing
+its direction and magnitude, the learned face representation
+is more robust to the variability of faces in the wild. To our
+best understanding, this is the ﬁrst work to unify the feature
+magnitude as quality indicator in face recognition.
+Before deﬁning the loss, let us ﬁrst introduce two aux-
+iliary functions related to ai, the magnitude-aware angu-
+lar margin m(ai) and the regularizer g(ai). The design
+of m(ai) follows a natural intuition: for high-quality sam-
+ples xi, they should concentrate in a small region around the
+cluster center wwith high certainty. By assuming a positive
+correlation between the magnitude and quality, we thereby
+penalize more on xi in terms of m(ai) if its magnitude ai is
+large. To have a better understanding, Fig. 2b visualizes the
+margins m(ai) corresponding to different magnitude val-
+ues. In contrast to ArcFace (Fig. 2a), the feasible region
+deﬁned by m(ai) has a shrinking boundary with respect
+to feature magnitude towards the class center w. Conse-
+quently, this boundary pulls the low-quality samples (circle
+2 and 3 in Fig. 2c) to the origin where they have lower risk
+to be penalized. However, the structure formed solely by
+m(ai) is unstable for high-quality samples like circle 1 in
+Fig. 2c as they have large freedom moving inside the fea-
+sible region. We therefore introduce the regularizer g(ai)
+that rewards sample with large magnitude. By designing
+g(ai) as a monotonically decreasing convex function with
+respect to ai, each sample would be pushed towards the
+boundary of the feasible region and the high-quality ones
+(circle 1) would be dragged closer to the class center w as
+shown in Fig. 2d. In a nutshell, MagFace extends ArcFace
+(Eq. 1) with magnitude-aware margin and regularizer to en-
+force higher diversity for inter-class samples and similarity
+for intra-class samples by optimizing:
+LMag = 1
+N
+N∑
+i=1
+Li, where (2)
+Li = −log escos (θyi+m(ai))
+escos (θyi+m(ai)) + ∑
+j̸=yi
+escos θj
++ λgg(ai).
+The hyper-parameter λg is used to trade-off between the
+classiﬁcation and regularization losses.
+The design of MagFace not only follows intuitive mo-
+tivations, but also yields result with theoretical guarantees.
+Assuming the magnitude ai is bounded in [la,ua], where
+m(ai) is a strictly increasing convex function, g(ai) is a
+strictly decreasing convex function and λg is large enough,
+we can prove (see detailed requirements and proofs in the
+supplementary) that the following two properties of Mag-
+Face loss always hold when optimizing Li over ai:
+Property of Convergence. Forai ∈[la,ua], Liis a strictly
+convex function which has a unique optimal solution a∗
+i.
+Property of Monotonicity. The optimal a∗
+i is monotoni-
+cally increasing as the cosine-distance to its class center
+decreases and the cos-distances to other classes increase.
+The property of convergence guarantees the unique op-
+timal solution for ai as well as the fast convergence. The
+property of monotonicity states that the feature magni-
+tudes reveal the difﬁculties for recognition, therefore can
+be treated as a metric for face qualities.
+3.3. Analysis on Feature Magnitude
+To better understand the effect of the MagFace loss,
+we conduct experiments on the widely used MS1M-V2 [9]
+
+--- Page 5 ---
+dataset and investigate for the training examples at conver-
+gence the relation between the feature magnitude and their
+similarity with class center as shown in Fig. 3.
+Softmax. The classical softmax-based loss underlies the
+objective of the pioneer work [35, 34] on deep face recog-
+nition. Without explicit constraint on magnitude, the value
+of the negative loss for each sample is almost independent
+to its magnitude as observed from Fig. 3a. As pointed in
+[25, 39], softmax tends to create a radial feature distribution
+because softmax loss acts as the soft version of max opera-
+tor and scaling the feature magnitude does not affect the as-
+signment of its class. To eliminate this effect, [25, 39] sug-
+gest that using normalized feature would beneﬁt the task.
+ArcFace. ArcFace can be considered as a special case
+of MagFace when m(ai) = mand g(ai) = 0. As shown
+in Fig. 3b, high-quality samples with large similaritycos(θ)
+to class center yield large variation in magnitude. This ev-
+idence echos our motivation on the unstable structure de-
+ﬁned by a ﬁxed angular margin in ArcFace for easy samples.
+On the other hand, for low-quality samples that are difﬁcult
+to be recognized (cos(θ) is small), the ﬁxed angular margin
+determines the magnitude needs to be large enough in order
+to ﬁt inside the feasible region (Fig. 2a). Therefore, there
+is a decreasing low bound for feature magnitudes w.r.t. the
+quality of face as indicated by the dash line in Fig. 3b.
+MagFace. In contrast to ArcFace, our MagFace opti-
+mizes the feature with adaptive margin and regularization
+based on its magnitude. Under this loss, it is clear to observe
+from Fig. 3c that there is a strong correlation between the
+feature magnitudes and their cosine similarities with class
+center. Those examples at the upper-right corner are the
+most high-quality ones. As the magnitude becomes smaller,
+the examples are more deviated from the class center. This
+distribution strongly supports the fact that the feature mag-
+nitude learned by MagFace is a good metric for face quality.
+4. Experiments
+In this section, we examine the proposed MagFace on
+three important face tasks: face recognition, quality as-
+sessment and face clustering. Sec. C in the supplementary
+presents the ablation study on relationships between margin
+distributions and recognition performances.
+4.1. Face Recognition
+Datasets. The original MS-Celeb-1M dataset [14] contains
+about 10 million images of 100k identities. However, it
+consists of a great many noisy face images. Instead, we
+employ MS1M-V2 [9] (5.8M images, 85k identities) as our
+training dataset. For evaluation, we adopt LFW [16], CFP-
+FP [28], AgeDB-30 [24], CALFW [51], CPLFW [50], IJB-
+B [45] and IJB-C [22] as the benchmarks. All the images
+are aligned to112×112 by following the setting in ArcFace.
+Method LFW CFP-FP AgeDB-30 CALFW CPLFW
+Softmax 99.70 98.20 97.72 95.65 92.02
+SV-AM-Softmax [42] 99.50 95.10 95.68 94.38 89.48
+SphereFace [20] 99.67 96.84 97.05 95.58 91.27
+CosFace [40] 99.78 98.26 98.17 96.18 92.18
+ArcFace [9] 99.81 98.40 98.05 95.96 92.72
+MagFace 99.83 98.46 98.17 96.15 92.87
+Table 1: Veriﬁcation accuracy (%) on easy benchmarks.
+Baselines. We re-implement state-of-the-art baselines in-
+cluding Softmax, SV-AM-Softmax [42], SphereFace [20],
+CosFace [40], ArcFace [9]. ResNet100 is equipped as the
+backbone. We use the recommended hyperparameters for
+each model, e.g., s= 64, m= 0.5 for ArcFace.
+Training. We train models on 8 1080Tis by stochastic
+gradient descent. The learning rate is initialized from 0.1
+and divided by 10 at 10, 18, 22 epochs, and we stop the
+training at the 25th epoch. The weight decay is set to
+5e-4 and the momentum is 0.9. We only augment train-
+ing samples by random horizontal ﬂip. For MagFace, we
+ﬁx the upper bound and lower bound of the magnitude as
+la = 10,ua = 110. m(ai) is chosen to be a linear function
+and g(ai) as a hyperbola. For detailed deﬁnition of m(ai),
+g(ai) and λg, please refer to Sec. B2 in the supplementary.
+In the end, our mean margin as well as other hyperparame-
+ters are all consistent with ArcFace.
+Test. During testing, cosine distance is used as metric on
+comparing 512-D features. For evaluations on IJB-B/C, one
+identity can have multiple images. The common way to rep-
+resent for an identity is to sum up the normalized feature
+fnorm
+i = fi
+∥fi∥ of each image and then normalize the em-
+bedding for comparisons, i.e., f =
+∑
+ifnorm
+i
+∥∑
+ifnorm
+i ∥. One ben-
+eﬁt of MagFace is that we can assign quality-aware weight
+∥fi∥to each normalized feature fnorm
+i . Therefore, we fur-
+ther evaluate “MagFace+” in Tab. 2 by computing the iden-
+tity embedding as f+ =
+∑
+ifi
+∥∑
+ifi∥.
+Results on LFW, CFP-FP, AgeDB-30, CALFW and
+CPLFW. We directly use the aligned images and proto-
+cols adopted by ArcFace [9] and present our results in
+Tab. 1. We note that performances are almost saturated.
+Compared to CosFace which is the second best baseline,
+ArcFace achieves 0.03%,0.14%,0.54% improvement on
+LFW, CFP-FP and CPLFW, while drops 0.12%,0.22% on
+AgeDB-30 and CALFW. MagFace obtains the overall best
+results and surpasses ArcFace by 0.02%, 0.06%, 0.12%,
+0.19% and 0.15% on ﬁve benchmarks respectively.
+Results on IJB-B/IJB-C. The IJB-B dataset contains 1,845
+subjects with 21.8K still images and 55K frames from 7,011
+videos. As the extension of IJB-B, the IJB-C dataset cov-
+ers about 3,500 identities with a total of 31,334 images and
+117,542 unconstrained video frames. In the 1:1 veriﬁcation,
+the number of positive/negative matches are 10k/8M in IJB-
+B and 19k/15M in IJB-C. We report the TARs at FAR=1e-6,
+
+--- Page 6 ---
+(a) mean: 22.84
+range: (-∞, 24)
+# of faces: 3692
+(b) mean: 25.13
+range: [24, 26)
+# of faces: 9955
+(c) mean: 27.03
+range: [26, 28)
+# of faces: 15459
+(d) mean: 29.03
+range: [28, 30)
+# of faces: 17565
+(e) mean: 31.01
+range: [30, 32)
+# of faces: 20627
+(f) mean: 32.99
+range: [32, 34)
+# of faces: 19743
+(g) mean: 34.80
+range: [34, 36)
+# of faces: 11238
+(h) mean: 36.55
+range: [36, ∞)
+# of faces: 1721
+Figure 4: Visualization of the mean faces of 100k images sampled from the IJB-C dataset. Each mean face corresponds to a group of faces
+based on the magnitude level of the features learned by MagFace.
+Method IJB-B (TAR@FAR) IJB-C (TAR@FAR)
+1e-6 1e-5 1e-4 1e-6 1e-5 1e-4
+VGGFace2* [6] - 67.10 80.00 - 74.70 84.00
+CenterFace* [44] - - - - 78.10 85.30
+CircleLoss* [32] - - - - 89.60 93.95
+ArcFace* [9] - - 94.20 - - 95.60
+Softmax 46.73 75.17 90.06 64.07 83.68 92.40
+SV-AM-Softmax [42] 29.81 69.25 84.79 63.45 80.30 88.34
+SphereFace [20] 39.40 73.58 89.19 68.86 83.33 91.77
+CosFace [40] 40.41 89.25 94.01 87.96 92.68 95.56
+ArcFace [9] 38.68 88.50 94.09 85.65 92.69 95.74
+MagFace 40.91 89.88 94.33 89.26 93.67 95.81
+MagFace+ 42.32 90.36 94.51 90.24 94.08 95.97
+Table 2: Veriﬁcation accuracy (%) on difﬁcult benchmarks. “*”
+indicates the result quoted from the original paper.
+1e-5 and 1e-4 as shown in Tab. 2.
+Our implemented ArcFace is on par with the original
+paper, e.g., our TARs at FAR=1e-4 differ from the au-
+thors by −0.11% and +0.14% on IJB-B and IJB-C re-
+spectively. Compared to baselines, our MagFace remains
+the top at all FAR criteria except for FAR=1e-6 on IJB-B
+as the TAR is very sensitive to the noise when the num-
+ber of FP is tiny. Compared to CosFace, MagFace gains
+0.50%,0.63%,0.32% on IJB-B at TAR@FAR=1e-6, 1e-5,
+1e-4 and 1.30%,0.99%,0.25% on IJB-C. Compared to Arc-
+Face, improvements are of 2.23%,1.38%,0.24% on IJB-B
+and 3.61%,0.98%,0.07% on IJB-C respectively. This re-
+sult demonstrates the superiority of MagFace on more chal-
+lenging benchmarks. It is worth to mention that when multi-
+ple images existed for one identity, the average embedding
+can be further improved by aggregating features weighted
+by magnitudes. For instance, MagFace+ outperforms Mag-
+Face by 1.41%/0.98% at FAR=1e-6, 0.48%/0.41% at
+FAR=1e-5 and 0.18%/0.16% at FAR=1e-4.
+4.2. Face Quality Assessment
+In this part, we investigate the qualitative and quantita-
+tive performance of the pre-trained MagFace model men-
+tioned in Tab. 2 for quality assessment.
+Visualization of the mean face. We ﬁrst sample 100k im-
+ages form IJB-C database and divide them into 8 groups
+based on feature magnitudes. We visualize the mean faces
+of each group in Fig. 4. It can be seen that when magni-
+27.9628.08 34.5934.81
+20.4619.83
+16.0816.86
+Figure 5: Distributions of magnitudes on different datasets.
+tude increases, the corresponding mean face reveals more
+details. This is because high-quality faces are inclined to be
+more frontal and distinctive. This implies the magnitude of
+MagFace feature is a good quality indicator.
+Sample distribution of datasets. Fig. 5 plots the sample
+histograms of different benchmarks with respect to Mag-
+Face magnitudes. We observe that LFW is the least noisy
+one where most samples are of large magnitudes. Due
+to the larger age variation, the distribution of AGEDB-30
+slightly shifts left compared to LFW. For CFP-FP, there are
+two peaks at the magnitude around 28 and 34, correspond-
+ing to the frontal and proﬁle faces respectively. Given the
+large variations in face qualities, we can conclude IJB-C is
+much more challenging than other benchmarks. For images
+(more examples can be found in the supplementary) with
+magnitudes a ≃15, there are no faces or very noisy faces
+to observe. When feature magnitudes increase from 20 to
+40, there is a clear trend that the face changes from proﬁle,
+blurred and occluded, to more frontal and distinctive. Over-
+all, this ﬁgure convinces us that MagFace is an effective tool
+to rank face images according to their qualities.
+Baselines. We choose six baselines of three types for quan-
+titative quality evaluation. Brisque [31], Niqe [23] and
+Piqe [37] are image-based quality metrics. FaceQNet [15]
+and SER-FIQ [36] are face-based ones. For FaceQNet, we
+adopt the released models by the authors. For SER-FIQ, we
+use the “same model” version which yields the best perfor-
+mance in the paper. Following the authors’ setting, we set
+m = 100 to forward each image 100 times with drop-out
+
+--- Page 7 ---
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.0000
+0.0005
+0.0010
+0.0015
+0.0020
+0.0025
+0.0030
+0.0035
+0.0040FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe
+(a) LFW - ArcFace
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.0000
+0.0005
+0.0010
+0.0015
+0.0020
+0.0025
+0.0030
+0.0035
+0.0040FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe (b) LFW - MagFace
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.00
+0.01
+0.02
+0.03
+0.04
+0.05
+0.06FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe
+(c) CFP-FP - ArcFace
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.00
+0.01
+0.02
+0.03
+0.04
+0.05
+0.06FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe (d) CFP-FP - MagFace
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.00
+0.01
+0.02
+0.03
+0.04
+0.05FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe
+(e) AgeDB-30 - ArcFace
+0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90
+Ratio of unconsidered image [%]
+0.00
+0.01
+0.02
+0.03
+0.04
+0.05FNMR
+MagFace
+SER-FIQ
+FaceQNet
+DUL
+Brisque
+Niqe
+Piqe (f) AgeDB-30 - MagFace
+Figure 6: Face veriﬁcation performance for the predicted face quality values with two evaluation models (ArcFace and MagFace). The
+curves show the effectiveness of rejecting low-quality face images in terms of false non-match rate (FNMR).Best viewed in color.
+active in inference. As a related work, we re-implement the
+recent DUL [7] method that can estimate uncertainty along
+with the face feature.
+Evaluation metric. Following previous work [12, 36,
+4], we evaluate the quality assessment on LFW/CFP-
+FP/AgeDB via the error-versus-reject curves, where images
+with the lowest predicted qualities are unconsidered and
+error rates are calculated on the remaining images. Error-
+versus-reject curve indicates good quality estimation when
+the veriﬁcation error decreases consistently while increas-
+ing the ratio of unconsidered images. To compute the fea-
+ture for veriﬁcation, we adopt the ArcFace* as well as our
+MagFace models in Tab. 2.
+Results on face veriﬁcation. Fig. 6 shows the error-versus-
+reject curves of different quality methods in terms of false
+non-match rate (FNMR) reported at false match rate (FMR)
+threshold of 0.001. Overall, we have two high-level ob-
+servations. 1) The curves on CFP-FP and AgeDB-30 are
+much more smooth than the ones obtained on LFW. This
+is because CFP-FP and AgeDB-30 consist of faces with
+larger variations in pose and age. Effectively dropping low-
+quality faces can beneﬁt the veriﬁcation performance more
+on these two benchmarks. 2) No matter computing the
+feature from ArcFace (left column) or MagFace (right col-
+umn), the curves corresponding to MagFace magnitude are
+consistently the lowest ones across different benchmarks.
+This indicates that the performance of MagFace magni-
+tude as quality generalizes well across datasets as well as
+face features. We then analyze the quality performance of
+each type of methods. 1) The image-based quality metrics
+(Brisque [31], Niqe [23], Piqe [37]) lead to relatively higher
+errors in most cases as the image quality alone is not suit-
+able for generalized face quality estimation. Factors of the
+face (such as pose, occlusions, and expressions) and model
+biases are not covered by these algorithms and might play
+an important role for face quality assessment. 2) The face-
+
+--- Page 8 ---
+based methods (FaceQNet [15] and SER-FIQ [36]) outper-
+forms other baselines in most cases. In particular, SER-FIQ
+is more effective than FaceQNet in terms of the veriﬁcation
+error rates. This is due to the fact that SER-FIQ is built on
+top of the deployed recognition model so that its prediction
+is more suitable for the veriﬁcation task. However, SEQ-
+FIQ takes a quadratic computational cost w.r.t. the number
+of sub-networks m randomly sampled using dropout. In
+contrary, the neglectable overhead of computing magnitude
+makes the proposed MagFace more practical in many real-
+time scenarios. Moreover, the training of MagFace does not
+require explicit labeling of face quality, which is not only
+time consuming but also error-prone to obtain. 3) At last,
+the uncertainty method (DUL) performs well on CFP-FP
+but yields more veriﬁcation errors on AgeDB-30 when the
+proportion of unconsidered images is increased. This may
+indicate that the Gaussian assumption of data variance in
+DUL is over-simpliﬁed such that the model cannot general-
+ize well to different kinds of quality factors.
+4.3. Face Clustering
+In this section, we conduct experiments on face cluster-
+ing to further investigate the structure of feature representa-
+tions learned by MagFace.
+0.2 0.4 0.6 0.8
+confidence of being class center
+20
+25
+30
+35
+40feature magnitude
+Figure 7: Visualization of MagFace magnitudes of 500 samples
+from IJB-B-1845 w.r.t. their conﬁdences of being class centers.
+Baselines. We compare the performances of MagFace and
+ArcFace by integrating their features with various cluster-
+ing methods. For fair comparisons, we constrain hyper-
+parameters of the two models to be consistent ( e.g., s=64,
+mean margin 0.5) during training. Four clustering methods
+are used in the evaluation: K-means [21], AHC [17], DB-
+SCAN [11] and L-GCN [43]. For non-deterministic algo-
+rithms (K-means and AHC), we report the average results
+from 10 runs. For L-GCN, we train the model on CASIA-
+WebFace [47] (0.5M images from 10k individuals) and fol-
+low the recommended settings in the paper [43].
+Benchmarks. We adopt the IJB-B [45] dataset as the
+benchmark as it contains a clustering protocol of seven sub-
+tasks varying in the number of ground truth identities. Fol-
+lowing [43], we evaluate on three largest sub-tasks where
+the numbers of identities are 512, 1,024 and 1,845, and the
+numbers of samples are 18,171, 36,575 and 68,195, respec-
+tively. Normalized mutual information (NMI) and BCubed
+Method Net IJB-B-512 IJB-B-1024 IJB-B-1845
+F NMI F NMI F NMI
+K-means [21] ArcFace 66.70 88.83 66.82 89.48 66.93 89.88
+MagFace66.75 88.86 67.33 89.62 67.06 89.96
+AHC [17] ArcFace 69.72 89.61 70.47 90.54 70.66 90.90
+MagFace70.24 89.99 70.68 90.67 70.98 91.06
+DBSCAN [11] ArcFace 72.72 90.42 72.50 91.15 73.89 91.96
+MagFace73.13 90.61 72.68 91.30 74.26 92.13
+L-GCN [43] ArcFace 84.92 93.72 83.50 93.78 80.35 92.30
+MagFace85.27 93.83 83.79 94.10 81.58 92.79
+Table 3: F-score (%) and NMI (%) on clustering benchmarks.
+F-measure [3] are employed as the evaluation metrics.
+Results. Tab. 3 summarizes the clustering results. We
+can observe that with stronger clustering methods from K-
+means to L-GCN, the overall clustering performance can be
+improved. For any combination of clustering and protocol,
+MagFace always achieves better performance than ArcFace
+in terms of both F-score and NMI metrics. This consis-
+tent superiority demonstrates the MagFace feature is more
+suitable for clustering. Notice that we keep the same hyper-
+parameters for clustering. The improvement of using Mag-
+Face must come from its better within-class feature distribu-
+tion, where the high-quality samples around the class center
+are more likely to be separated across different classes.
+We further explore the relationship between feature mag-
+nitudes and the conﬁdences of being class centers. Fol-
+lowing the idea mentioned in [46], the conﬁdence of be-
+ing a class center for each sample is estimated based on
+its neighbor structure deﬁned by face features. The sam-
+ples with dense and pure local connection have high con-
+ﬁdence, while those with sparse connections or residing in
+the boundary among several clusters have low conﬁdence.
+From Fig. 7, it is easy to observe that the MagFace magni-
+tude is positively correlated with conﬁdence of class center
+on the IJB-B-1845 benchmark. This result reﬂects that the
+MagFace feature exhibits the expected within-class struc-
+ture, where high quality samples distribute around class
+center while low quality ones are far away from the center.
+5. Conclusion
+In this paper, we propose MagFace to learn uniﬁed fea-
+tures for face recognition and quality assessment. By push-
+ing ambiguous samples away from class centers, MagFace
+improves the within-class feature distribution from previous
+margin-based work for face recognition. The adequate theo-
+retical and experimental results convince that MagFace can
+simultaneously access quality for the input face image. As a
+general framework, MagFace can be potentially extended to
+beneﬁt other classiﬁcation tasks such as ﬁne-grained object
+recognition, person re-identiﬁcation. Moreover, the pro-
+posed principle of exploring feature magnitude paves the
+way to estimate quality for other objects, e.g., person body
+in reid or action snippet in activity classiﬁcation.
+
+--- Page 9 ---
+References
+[1] Information technology – Biometric data interchange for-
+mats – Part 5: Face image data. Standard, International Or-
+ganization for Standardization, Nov. 2011. 1, 2
+[2] Machine Readable Travel Documents. Standard, Interna-
+tional Civil Aviation Organization, 2015. 1, 2
+[3] Enrique Amig ´o, Julio Gonzalo, Javier Artiles, and Felisa
+Verdejo. A comparison of extrinsic clustering evaluation
+metrics based on formal constraints. Information retrieval,
+12(4):461–486, 2009. 8
+[4] Lacey Best-Rowden and Anil K Jain. Learning face image
+quality from human assessments. IEEE Trans. Information
+Forensics and Security, 13(12):3064–3077, 2018. 1, 2, 7
+[5] Dong Cao, Xiangyu Zhu, Xingyu Huang, Jianzhu Guo, and
+Zhen Lei. Domain balancing: Face recognition on long-
+tailed domains. In IEEE Conference on Computer Vision
+and Pattern Recognition, pages 5671–5679, 2020. 1
+[6] Qiong Cao, Li Shen, Weidi Xie, Omkar M Parkhi, and An-
+drew Zisserman. VggFace2: A dataset for recognising faces
+across pose and age. In IEEE Int’l Conf. Automatic Face &
+Gesture Recognition (FG), pages 67–74. IEEE, 2018. 6
+[7] Jie Chang, Zhonghao Lan, Changmao Cheng, and Yichen
+Wei. Data uncertainty learning in face recognition. In IEEE
+Conference on Computer Vision and Pattern Recognition ,
+pages 5710–5719, 2020. 2, 4, 7
+[8] Sumit Chopra, Raia Hadsell, and Yann LeCun. Learning
+a similarity metric discriminatively, with application to face
+veriﬁcation. In IEEE Conference on Computer Vision and
+Pattern Recognition, volume 1, pages 539–546. IEEE, 2005.
+2
+[9] Jiankang Deng, Jia Guo, Niannan Xue, and Stefanos
+Zafeiriou. ArcFace: Additive angular margin loss for deep
+face recognition. In IEEE Conference on Computer Vision
+and Pattern Recognition, pages 4690–4699, 2019. 1, 2, 3, 4,
+5, 6, 11, 12
+[10] Hang Du, Hailin Shi, Dan Zeng, and Tao Mei. The elements
+of end-to-end deep face recognition: A survey of recent ad-
+vances. arXiv preprint arXiv:2009.13290, 2020. 3
+[11] Martin Ester, Hans-Peter Kriegel, J ¨org Sander, Xiaowei Xu,
+et al. A density-based algorithm for discovering clusters in
+large spatial databases with noise. InKDD, volume 96, pages
+226–231, 1996. 3, 8
+[12] Patrick Grother and Elham Tabassi. Performance of biomet-
+ric quality measures. IEEE Trans on Pattern Analysis and
+Machine Intelligence, 29(4):531–543, 2007. 7
+[13] Jianzhu Guo, Xiangyu Zhu, Chenxu Zhao, Dong Cao, Zhen
+Lei, and Stan Z Li. Learning meta face recognition in un-
+seen domains. In IEEE Conference on Computer Vision and
+Pattern Recognition, pages 6163–6172, 2020. 1
+[14] Yandong Guo, Lei Zhang, Yuxiao Hu, Xiaodong He, and
+Jianfeng Gao. MS-Celeb-1M: A dataset and benchmark for
+large-scale face recognition. In European Conference on
+Computer Vision, pages 87–102. Springer, 2016. 4, 5, 11,
+12
+[15] Javier Hernandez-Ortega, Javier Galbally, Julian Fierrez,
+Rudolf Haraksim, and Laurent Beslay. FaceQnet: quality
+assessment for face recognition based on deep learning. In
+International Conference on Biometrics, 2019. 1, 2, 6, 8
+[16] Gary B Huang, Marwan Mattar, Tamara Berg, and Eric
+Learned-Miller. Labeled faces in the wild: A database
+for studying face recognition in unconstrained environ-
+ments. Technical Report 07-49, University of Massachusetts,
+Amherst, 2007. 5
+[17] Anil k. Jai, Richard C. Dubes, and Englewood Cliffs. Algo-
+rithms for clustering data. NJ:Prentice-Hall, 1988. 8
+[18] Bingyu Liu, Weihong Deng, Yaoyao Zhong, Mei Wang, Jiani
+Hu, Xunqiang Tao, and Yaohai Huang. Fair loss: margin-
+aware reinforcement learning for deep face recognition. In
+International Conference on Computer Vision, pages 10052–
+10061, 2019. 2
+[19] Hao Liu, Xiangyu Zhu, Zhen Lei, and Stan Z Li. Adaptive-
+Face: Adaptive margin and sampling for face recognition. In
+IEEE Conference on Computer Vision and Pattern Recogni-
+tion, pages 11947–11956, 2019. 2
+[20] Weiyang Liu, Yandong Wen, Zhiding Yu, Ming Li, Bhiksha
+Raj, and Le Song. Sphereface: Deep hypersphere embed-
+ding for face recognition. In IEEE Conference on Computer
+Vision and Pattern Recognition, pages 212–220, 2017. 1, 2,
+5, 6
+[21] Stuart Lloyd. Least squares quantization in PCM. IEEE
+Trans. Information Theory, 28(2):129–137, 1982. 3, 8
+[22] Brianna Maze, Jocelyn Adams, James A Duncan, Nathan
+Kalka, Tim Miller, Charles Otto, Anil K Jain, W Tyler
+Niggel, Janet Anderson, Jordan Cheney, et al. IARPA Janus
+benchmark-C: Face dataset and protocol. In International
+Conference on Biometrics, pages 158–165. IEEE, 2018. 5
+[23] Anish Mittal, Rajiv Soundararajan, and Alan C Bovik. Mak-
+ing a “completely blind” image quality analyzer. IEEE Sig-
+nal processing letters, 20(3):209–212, 2012. 2, 6, 7
+[24] Stylianos Moschoglou, Athanasios Papaioannou, Chris-
+tos Sagonas, Jiankang Deng, Irene Kotsia, and Stefanos
+Zafeiriou. AgeDB: the ﬁrst manually collected, in-the-wild
+age database. In IEEE Conference on Computer Vision and
+Pattern Recognition Workshop, pages 51–59, 2017. 5
+[25] Rajeev Ranjan, Carlos D Castillo, and Rama Chellappa. L2-
+constrained softmax loss for discriminative face veriﬁcation.
+arXiv preprint arXiv:1703.09507, 2017. 1, 2, 5
+[26] Torsten Schlett, Christian Rathgeb, Olaf Henniger, Javier
+Galbally, Julian Fierrez, and Christoph Busch. Face im-
+age quality assessment: A literature survey. arXiv preprint
+arXiv:2009.01103, 2020. 1
+[27] Florian Schroff, Dmitry Kalenichenko, and James Philbin.
+FaceNet: A uniﬁed embedding for face recognition and clus-
+tering. In IEEE Conference on Computer Vision and Pattern
+Recognition, pages 815–823, 2015. 1, 2
+[28] Soumyadip Sengupta, Jun-Cheng Chen, Carlos Castillo,
+Vishal M Patel, Rama Chellappa, and David W Jacobs.
+Frontal to proﬁle face veriﬁcation in the wild. In IEEE Win-
+ter Conference on Applications of Computer Vision (WACV),
+pages 1–9. IEEE, 2016. 5
+[29] Yichun Shi and Anil K Jain. Probabilistic face embed-
+dings. In International Conference on Computer Vision ,
+pages 6902–6911, 2019. 2, 4
+
+--- Page 10 ---
+[30] Kihyuk Sohn. Improved deep metric learning with multi-
+class n-pair loss objective. In Annual Conference on Neural
+Information Processing Systems, pages 1857–1865, 2016. 1,
+2
+[31] Tao Sun, Xingjie Zhu, Jeng-Shyang Pan, Jiajun Wen, and
+Fanqiang Meng. No-reference image quality assessment in
+spatial domain. In Genetic and Evolutionary Computing ,
+pages 381–388. Springer, 2015. 2, 6, 7
+[32] Yifan Sun, Changmao Cheng, Yuhan Zhang, Chi Zhang,
+Liang Zheng, Zhongdao Wang, and Yichen Wei. Circle loss:
+A uniﬁed perspective of pair similarity optimization. InIEEE
+Conference on Computer Vision and Pattern Recognition ,
+pages 6398–6407, 2020. 6
+[33] Yi Sun, Ding Liang, Xiaogang Wang, and Xiaoou Tang.
+DeepID3: Face recognition with very deep neural networks.
+arXiv preprint arXiv:1502.00873, 2015. 2
+[34] Yi Sun, Xiaogang Wang, and Xiaoou Tang. Deep learn-
+ing face representation from predicting 10,000 classes. In
+IEEE Conference on Computer Vision and Pattern Recogni-
+tion, pages 1891–1898, 2014. 5
+[35] Yaniv Taigman, Ming Yang, Marc’Aurelio Ranzato, and Lior
+Wolf. DeepFace: Closing the gap to human-level perfor-
+mance in face veriﬁcation. In IEEE Conference on Computer
+Vision and Pattern Recognition, pages 1701–1708, 2014. 2,
+5
+[36] Philipp Terhorst, Jan Niklas Kolf, Naser Damer, Florian
+Kirchbuchner, and Arjan Kuijper. SER-FIQ: Unsupervised
+estimation of face image quality based on stochastic embed-
+ding robustness. In IEEE Conference on Computer Vision
+and Pattern Recognition, 2020. 1, 2, 6, 7, 8
+[37] N Venkatanath, D Praneeth, Maruthi Chandrasekhar Bh,
+Sumohana S Channappayya, and Swarup S Medasani. Blind
+image quality evaluation using perception based features. In
+National Conference on Communications (NCC), pages 1–6.
+IEEE, 2015. 2, 6, 7
+[38] Feng Wang, Jian Cheng, Weiyang Liu, and Haijun Liu. Ad-
+ditive margin softmax for face veriﬁcation.IEEE Signal Pro-
+cessing Letters, 25(7):926–930, 2018. 2
+[39] Feng Wang, Xiang Xiang, Jian Cheng, and Alan Loddon
+Yuille. NormFace: L2 hypersphere embedding for face ver-
+iﬁcation. In ACM International Conference on Multimedia,
+pages 1041–1049, 2017. 2, 5
+[40] Hao Wang, Yitong Wang, Zheng Zhou, Xing Ji, Dihong
+Gong, Jingchao Zhou, Zhifeng Li, and Wei Liu. CosFace:
+Large margin cosine loss for deep face recognition. In IEEE
+Conference on Computer Vision and Pattern Recognition ,
+pages 5265–5274, 2018. 1, 2, 5, 6
+[41] Jian Wang, Feng Zhou, Shilei Wen, Xiao Liu, and Yuanqing
+Lin. Deep metric learning with angular loss. InInternational
+Conference on Computer Vision, pages 2593–2601, 2017. 2
+[42] Xiaobo Wang, Shuo Wang, Shifeng Zhang, Tianyu Fu,
+Hailin Shi, and Tao Mei. Support vector guided softmax
+loss for face recognition. arXiv preprint arXiv:1812.11317,
+2018. 2, 5, 6
+[43] Zhongdao Wang, Liang Zheng, Yali Li, and Shengjin Wang.
+Linkage based face clustering via graph convolution net-
+work. In IEEE Conference on Computer Vision and Pattern
+Recognition, 2019. 3, 8
+[44] Yandong Wen, Kaipeng Zhang, Zhifeng Li, and Yu Qiao. A
+discriminative feature learning approach for deep face recog-
+nition. In European Conference on Computer Vision, pages
+499–515. Springer, 2016. 2, 6
+[45] Cameron Whitelam, Emma Taborsky, Austin Blanton, Bri-
+anna Maze, Jocelyn Adams, Tim Miller, Nathan Kalka,
+Anil K Jain, James A Duncan, Kristen Allen, et al. IARPA
+Janus benchmark-B face dataset. In IEEE Conference on
+Computer Vision and Pattern Recognition Workshop, pages
+90–98, 2017. 5, 8
+[46] Lei Yang, Dapeng Chen, Xiaohang Zhan, Rui Zhao,
+Chen Change Loy, and Dahua Lin. Learning to cluster faces
+via conﬁdence and connectivity estimation. In IEEE Confer-
+ence on Computer Vision and Pattern Recognition, 2020. 3,
+8
+[47] Dong Yi, Zhen Lei, Shengcai Liao, and Stan Z Li. Learn-
+ing face representation from scratch. arXiv preprint
+arXiv:1411.7923, 2014. 8
+[48] Yuhui Yuan, Kuiyuan Yang, and Chao Zhang. Feature
+incay for representation regularization. arXiv preprint
+arXiv:1705.10284, 2017. 1
+[49] Xiao Zhang, Rui Zhao, Yu Qiao, Xiaogang Wang, and Hong-
+sheng Li. AdaCos: Adaptively scaling cosine logits for ef-
+fectively learning deep face representations. In IEEE Con-
+ference on Computer Vision and Pattern Recognition, pages
+10823–10832, 2019. 2
+[50] Tianyue Zheng and Weihong Deng. Cross-pose LFW: A
+database for studying cross-pose face recognition in un-
+constrained environments. Beijing University of Posts and
+Telecommunications, Tech. Rep, 5, 2018. 5
+[51] Tianyue Zheng, Weihong Deng, and Jiani Hu. Cross-
+age LFW: A database for studying cross-age face recog-
+nition in unconstrained environments. arXiv preprint
+arXiv:1708.08197, 2017. 5
+
+--- Page 11 ---
+A. Proofs for MagFace
+Recall the MagFace loss for a sample iis
+Li = −log escos (θyi+m(ai))
+escos (θyi+m(ai)) + ∑n
+j=1,j̸=yi escosθj
++ λgg(ai)
+(3)
+Let A(ai) = scos(θyi + m(ai)) and B =∑n
+j=1,j̸=yi escos θj and rewrite the loss as
+Li = −log eA(ai)
+eA(ai)+B + λgg(ai) (4)
+We ﬁrst introduce and prove Lemma 1.
+Lemma 1. Assume that fi is top-k correctly classiﬁed and
+m(ai) ∈ [0,π/2]. If the number of identities n is much
+larger than k(i.e., n≫k), the probability ofθyi+m(ai) ∈
+[0,π/2] approaches 1.
+Proof. Denote the angle between featurefiand center class
+Wj,j ∈{1,··· ,n}as θj. Assuming the distribution of θj
+is uniform, it’s easy to prove P(θj + m(ai) ∈[0,π/2]) =
+π/2−m(ai)
+π . Let p = π/2−m(ai)
+π . If fi is top-k correctly
+classiﬁed, the probability of θyi + m(ai) ∈[0,π/2] is the
+same as the probability of there are at least k θ to satisfy
+θ+ m(ai) ∈[0,π/2]. Then the probability is
+P(θyi+m(ai) ∈[0,π/2]) =
+n∑
+i=k
+(n
+i
+)
+pi(1−p)(n−i)o
+= 1−
+k−1∑
+i=0
+(n
+i
+)
+pi(1−p)(n−i)
+(5)
+When n is a large integer and n ≫ k, each
+(n
+i
+)
+pi(1 −
+p)(n−i),i = 1,2,···k−1 converges to 0. Therefore, prob-
+ability of θyi + m(ai) ∈[0,π/2] approaches 1.
+Lemma 1 is fundamental for the following proofs. The
+number of identities is large in real-world applications (e.g.,
+3.8M for MS1Mv2 [14, 9]). Therefore, the probability of
+θyi + m(ai) ∈[0,π/2] approaches 1 in most cases.
+A.1. Requirements for MagFace
+In MagFace, m(ai),g(ai),λg are required to have the
+following properties:
+1. m(ai) is an increasing convex function in [la,ua] and
+m′(ai) ∈(0,K], where Kis a upper bound;
+2. g(ai) is a strictly convex function with g′(ua) = 0;
+3. λg ≥ sK
+−g′(la) .
+A.2. Proof for Property of Convergence
+We prove the property of convergence by showing the
+strict convexity of the function Li (Property 5) and the ex-
+istence of the optimum (Property 6).
+Property 1. For ai ∈[la,ua], Li is a strictly convex func-
+tion of ai.
+Proof. The ﬁrst and second deriviates of A(ai) are
+A′(ai) =−ssin(θyi + m(ai))m′(ai)
+A′′(ai) =−scos(θyi + m(ai))(m′(ai))2
+−ssin(θyi + m(ai))m′′(ai)
+(6)
+According to Lemma 1, we have cos(θyi + m(ai)) ≥ 0
+and sin(θyi + m(ai)) ≥0. Because we deﬁne m(ai) to be
+convex and g(ai) to be strictly convex for ai ∈ [la,ua],
+m′′(ai) ≥ 0 and g′′(ai) > 0 always hold. Therefore,
+A′′(ai) ≤0.
+The ﬁrst and second order derivatives of the loss Li are
+∂Li
+∂ai
+=− B
+eA(ai) +BA′(ai) +λgg′(ai)
+∂2Li
+(∂ai)2 =− B
+(eA(ai) +B)2
+(
+(eA(ai) +B)A′′(ai)−BeA(ai)A′(ai)2)
++λgg′′(ai)
+=− B
+eA(ai) +BA′′(ai) + B2
+(eA(ai) +B)2eA(ai)A′(ai)2
++λgg′′(ai)
+As B >0,eA(ai) + B >0, it’s easy to prove that ﬁrst
+two parts of ∂2Li
+(∂ai)2 are non-negative while the third part is
+always positive. Therefore, ∂2Li
+(∂ai)2 > 0 and Li is a strictly
+convex function with respect to ai.
+Property 2. A unique optimal solution a∗
+i exists in [la,ua].
+Proof. Because the loss function Li is a strictly convex
+function, we have ∂Li
+∂a1
+i
+> ∂Li
+∂a2
+i
+if ua ≥a1
+i > a2
+i ≥la. Next
+we prove that there exist a optimal solution a∗
+i ∈[la,ua]. If
+it exists, then it is unique because of the strict convexity.
+As ∂Li
+∂ai
+(ai) = Bs
+eA(ai)+B sin(θyi + m(ai))m′(ai) +
+λgg′(ai) and considering the constraints m′(ai) ∈(0,K],
+g′(ua) = 0, λg ≥ sK
+−g′(la) , the values of derivatives ofla,ua
+are
+∂Li
+∂ai
+(ua) = Bs
+eA(ai) +Bsin(θyi+m(ai))m′(ua) >0
+∂Li
+∂ai
+(la) = Bs
+eA(ai) +Bsin(θyi+m(ai))m′(la) +λgg′(la)
+<sK+λgg′(la) ≤0
+(7)
+As ∂Li
+∂ai
+is monotonically and strictly increasing, there must
+exist a unique value in [la,ua] which have a 0 derivative.
+Therefore, an optimal solution exists and is unique.
+
+--- Page 12 ---
+Method Hyperparameters Margin CFP-FP IJB-C (TAR@FAR)
+lm um λg la ua mean max min 1e-6 1e-5 1e-4 1e-3
+ArcFace - - - - - 0.50 - - 97.32 83.88 91.59 95.00 96.86
+MagFace 0.45 0.65 35 10 110 0.50 0.49 0.52 97.23 81.12 91.44 94.95 96.96
+0.40 0.80 35 10 110 0.50 0.46 0.53 97.47 85.82 92.06 95.12 96.92
+0.35 1.00 35 10 110 0.50 0.42 0.54 97.40 84.35 91.65 95.05 97.02
+0.25 1.60 35 10 110 0.50 0.35 0.61 97.30 81.64 91.09 94.91 96.87
+Table 4: Veriﬁcation accuracy (%) on CFP-FP and IJB-C with different distributions of margins. Backbone network: ResNet50.
+A.3. Proof for Property of Monotonicity
+To prove the property of monotonicity, we ﬁrst show that
+optimal a∗
+i increases with a smaller cosine-distance to its
+class center (Property 3). As B can reveal the overall cos-
+distances to other class centers, we further prove that de-
+creasing B (distances to other class centers increases) can
+increase optimal feature magnitude (Property 4). In the end,
+we can conclude that a∗
+i is monotonically increasing as the
+cosine-distance to its class center decreases and the cosine-
+distances to other classes increase.
+Property 3. With ﬁxed fi and Wj,j ∈{1,··· ,n},j ̸= yi,
+the optimal feature magnitude a∗
+i is monotonically increas-
+ing if the cosine-distance to its class center Wyi decreases.
+Proof. Assuming there are two class center W1
+yi,W2
+yi and
+their cosine distances to feature fi are θ1
+yi,θ2
+yi. Assuming
+θ1
+yi <θ2
+yi (i.e., class center W1
+yi has a smaller distance with
+feature fi) and the corresponding optimal feature magni-
+tudes are a∗
+i,1,a∗
+i,2.
+The ﬁrst derivate of Li is
+∂Li
+∂ai
+=− B
+eA(ai) +BA′(ai) +λgg′(ai)
+= Bsm′(ai)
+escos(θyi+m(ai)) +Bsin(θyi+m(ai)) +λgg′(ai)
+(8)
+For θyi + m(ai) ∈(0,π/2], we have cos(θ1
+yi + m(ai)) >
+cos(θ2
+yi+m(ai)) and sin(θ1
+yi+m(ai)) <sin(θ2
+yi+m(ai)).
+With m′(ai) >0, it’s obvious that
+Bsm′(ai)
+escos(θ1yi+m(ai))+B
+sin(θ1yi+m(ai))< Bsm′(ai)
+escos(θ2yi+m(ai))+B
+sin(θ2yi+m(ai)).
+Therefore, we have
+∂Li(θ1
+yi)
+∂ai
+<
+∂Li(θ2
+yi)
+∂ai
+. Based on the
+property of optimal solution for strictly convex function, we
+have 0 =
+∂Li(θ1
+yi)
+∂a∗
+i,1
+=
+∂Li(θ2
+yi)
+∂a∗
+i,2
+>
+∂Li(θ1
+yi)
+∂a∗
+i,2
+, which leads to
+a∗
+i,1 >a∗
+i,2.
+Property 4. With other things ﬁxed, the optimal feature
+magnitude a∗
+i is monotonically increasing with a decreas-
+ing B(i.e., increasing inter-class distance).
+Proof. Assume 0 < B1 < B2 with optimum a∗
+i,1,a∗
+i,2.
+Similar to the proof before, it’s easy to show
+B1sm′(ai)
+escos(θyi+m(ai))+B1
+sin(θyi+m(ai))< B2sm′(ai)
+escos(θyi+m(ai))+B2
+sin(θyi+m(ai)).
+Therefore, we have ∂Li(B1)
+∂ai
+< ∂Li(B2)
+∂ai
+. Based on the prop-
+erty of optimal solution for strictly convex function, we
+have 0 = ∂Li(B1)
+∂a∗
+i,1
+= ∂Li(B2)
+∂a∗
+i,2
+> ∂Li(B1)
+∂a∗
+i,2
+, which leads to
+a∗
+i,1 >a∗
+i,2.
+B. Experimental Settings
+B.1. Training settings for Figure 3
+We adopt ResNet50 as the backbone network. Models
+are trained on MS1Mv2 [14, 9] for 20 epochs with batch
+size 512 and initial learning rate 0.1, dropped by 0.1 every
+5 epochs. 512 samples of the last iteration are used for vi-
+sualization.
+B.2. Settings of m(ai), g(ai) and λg
+In our experiments, we deﬁne function m(ai) as a linear
+function deﬁned on [la,ua] with m(la) =lm,m(ua) =um
+and g(ai) = 1
+ai
++ 1
+u2a
+ai. Therefore, we have
+m(ai) =um−lm
+ua−la
+(ai−la) +lm
+λg≥ sK
+−g′(la) = su2al2a
+(u2a−l2a)
+um−lm
+ua−la
+(9)
+C. Ablation Study on Margin Distributions
+In this section, effects of the feature distributions during
+training are studied. With (λg,la,ua) ﬁxed to (35,10,110),
+we carefully select various combinations of lm,um to align
+the mean margin on the training dataset to ArcFace (0.5)
+in our implementation. Features are distributed more sepa-
+rated if with a larger maximum margin and a smaller mini-
+mum margin.
+Table 4 shows the recognition results with various hyper-
+parameters. With (lm,um) = (0.45,0.65), the penalty of
+magnitude loss degrades the performance of the recogni-
+tion. With (lm,um) = (0.25,1.60), the performance is
+also worse than then baseline as hard samples are assigned
+to small margins ( a.k.a., hard/noisy samples are down-
+weighted). Parameter (0.40,0.80) balances the feature dis-
+tribution and margins for hard/noisy samples, and therefore
+achieves a signiﬁcant improvement on benchmarks.
+D. Extended Visualization of Figure 6
+We present a extended visualization of ﬁgure 6 in ﬁg-
+ure 8 which has more examples of faces with feature mag-
+
+--- Page 13 ---
+14.0815.3216.0816.86
+19.6319.8320.0420.46
+24.68 25.3824.7225.23
+29.60 30.0829.7729.84
+34.59 38.0235.4538.42
+Figure 8: Extended Visualization of Figure 6.
+nitudes. All the faces are sample from the IJB-C bench-
+mark. It can be seen that faces with magnitudes around
+28 are mostly proﬁle faces while around 35 are high-
+quality and frontal faces. That is consistent with the pro-
+ﬁle/frontal peaks in the CFP-FP benchmark and indicates
+that faces with similar magnitudes show similar quality pat-
+terns across benchmarks. In real applications, we can set a
+proper threshold for the magnitude and should be able to ﬁl-
+ter similar low-quality faces, even under various scenarios.
+Besides directly served as qualities, our feature magni-
+tudes can also be used as quality labels for faces, which
+avoids human labelling costs. These labels are more suit-
+able for recognition, and therefore can be used to boost
+other quality models.
+E. Mag-CosFace
+In the main text, MagFace is modiﬁed from the Arc-
+Face loss. In this section, we show that MagFace based
+on CosFace loss (denote as Mag-CosFace) can theoretically
+achieve the same effects. Mag-CosFace loss for a sample i
+is
+Li = −log es(cosθyi−m(ai))
+es(cosθyi−m(ai)) + ∑n
+j=1,j̸=yi escosθj
++ λgg(ai)
+(10)
+Let A(ai) = s(cos θyi − m(ai)) and B =∑n
+j=1,j̸=yi escos θj and rewrite the loss as
+Li = −log eA(ai)
+eA(ai)+B + λgg(ai) (11)
+E.1. Property of Convergence for Mag-CosFace
+Property 5. For ai ∈[la,ua], Li is a strictly convex func-
+tion of ai.
+Proof. The ﬁrst and second deriviates of A(ai) are
+A′(ai) =−sm′(ai)
+A′′(ai) =−sm′′(ai) (12)
+As A′′(ai) ≤0, the property can be proved following that
+presented before.
+Property 6. A unique optimal solution a∗
+i exists in [la,ua].
+Proof. We only need to prove
+∂Li
+∂ai
+(ua) = Bs
+eA(ai) +Bm′(ua) >0
+∂Li
+∂ai
+(la) = Bs
+eA(ai) +Bm′(la) +λgg′(la)
+<sK+λgg′(la) ≤0
+(13)
+Then it’s easy to have there is a unique optimu.
+E.2. Property of Monotonicity for Mag-CosFace
+Property 7. With ﬁxed fi and Wj,j ∈{1,··· ,n},j ̸= yi,
+the optimal feature magnitude a∗
+i is monotonically increas-
+ing if the cosine-distance to its class center Wyi decreases.
+
+--- Page 14 ---
+Proof. The ﬁrst derivate of Li is
+∂Li
+∂ai
+= − B
+eA(ai) +BA′(ai) +λgg′(ai)
+= Bsm′(ai)
+es(cosθyi−m(ai)) +B+λgg′(ai)
+(14)
+For θ1
+yi <θ2
+yi, the core here is to prove
+∂Li(θ1
+yi)
+∂ai
+<
+∂Li(θ2
+yi)
+∂ai
+,
+which is obvious ascos θ1
+yi >cos θ2
+yi. The rest of the proofs
+is the same as those for the original MagFace.
+Property 8. With other things ﬁxed, the optimal feature
+magnitude a∗
+i is monotonically increasing with a decreas-
+ing B(i.e., increasing inter-class distance).
+Proof. It’s easy to have ∂Li(B1)
+∂ai
+< ∂Li(B2)
+∂ai
+if B1 < B2.
+The rest of the proofs is the same as those for the original
+MagFace.
+F. Authors’ Contributions
+Shichao Zhao and Zhida Huang contribute similarly to
+this work. Besides involved in discussions, Shichao Zhao
+mainly conducted experiments on face clustering and Zhida
+Huang implemented baselines as well as evaluation metrics
+for quality experiments.

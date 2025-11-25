@@ -1,0 +1,22 @@
+name: attention-invariant-face-recognition
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch>=2.1
+  - torchvision>=0.16
+  - torchaudio>=2.1
+  - numpy>=1.24
+  - scipy
+  - scikit-learn
+  - pandas
+  - matplotlib
+  - pillow
+  - opencv
+  - tqdm
+  - pyyaml
+  - pip
+  - pip:
+      - pypdf
